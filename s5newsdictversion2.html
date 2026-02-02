@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F5 Dictation Revision Tool</title>
+    <style>
+        :root { --primary: #2c3e50; --secondary: #3498db; --success: #27ae60; --error: #e74c3c; --hint: #f39c12; --rewind: #9b59b6; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; padding: 15px; color: #333; }
+        .container { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 700px; margin: auto; }
+        
+        .score-board { display: flex; justify-content: space-around; align-items: center; background: var(--primary); color: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; }
+        .score-num { font-size: 1.5em; font-weight: bold; color: #f1c40f; }
+
+        .nav-tabs { display: flex; justify-content: center; gap: 10px; margin-bottom: 15px; }
+        .tab-btn { padding: 8px 15px; border: 2px solid var(--secondary); background: transparent; color: var(--secondary); border-radius: 20px; cursor: pointer; font-weight: bold; }
+        .tab-btn.active { background: var(--secondary); color: white; }
+
+        .audio-section { background: #ebf5fb; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 15px; }
+        .audio-controls { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+        
+        button { border: none; padding: 10px 15px; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; transition: 0.2s; font-size: 0.9em; }
+        .btn-audio { background: var(--secondary); flex: 1; }
+        .btn-pause { background: var(--hint); }
+        .btn-rewind { background: var(--rewind); }
+        
+        textarea { width: 100%; height: 110px; border: 2px solid #ddd; border-radius: 10px; padding: 15px; font-size: 1.05em; box-sizing: border-box; margin-bottom: 10px; resize: none; }
+
+        .main-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .btn-check { background: var(--success); }
+        .btn-hint { background: var(--hint); }
+        .btn-clear { background: #95a5a6; }
+        .btn-report { background: #8e44ad; }
+
+        #hint-display { margin-top: 5px; color: var(--hint); font-family: monospace; display: none; background: #fff9f0; padding: 10px; border-radius: 5px; border: 1px dashed var(--hint); word-wrap: break-word; }
+        #feedback { margin-top: 20px; padding: 15px; border-radius: 10px; display: none; background: #f9f9f9; border: 1px solid #eee; line-height: 1.8; }
+        .correct { color: var(--success); font-weight: bold; }
+        .incorrect { color: var(--error); text-decoration: underline; background: #fff0f0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="score-board">
+        <div style="text-align: center;"><div>Section</div><div id="display-idx" class="score-num">1 / 2</div></div>
+        <div style="text-align: center;"><div>Accuracy</div><div id="display-score" class="score-num">0%</div></div>
+    </div>
+
+    <div class="nav-tabs">
+        <button class="tab-btn active" onclick="switchSentence(0)">Part 1</button>
+        <button class="tab-btn" onclick="switchSentence(1)">Part 2</button>
+    </div>
+
+    <div class="audio-section">
+        <div class="audio-controls">
+            <button class="btn-audio" onclick="playText()">Play 🔊</button>
+            <button class="btn-pause" onclick="pauseText()" id="pauseBtn">Pause ⏸</button>
+            <button class="btn-rewind" onclick="restartText()">Restart ↺</button>
+        </div>
+        <p style="font-size: 0.8em; color: #5a87a1; margin-top: 8px;">Tip: Restart if you miss a word!</p>
+    </div>
+
+    <input type="text" id="studentName" placeholder="Student Name" style="width:100%; margin-bottom:10px; padding:8px; border-radius:5px; border:1px solid #ddd; box-sizing: border-box;">
+    <textarea id="userInput" placeholder="Listen and type..."></textarea>
+
+    <div id="hint-display"></div>
+
+    <div class="main-controls">
+        <button class="btn-check" onclick="checkAnswer()">Check Answer</button>
+        <button class="btn-hint" onclick="showHint()">Hint (Letters)</button>
+        <button class="btn-clear" onclick="clearAll()">Clear</button>
+        <button class="btn-report" onclick="downloadReport()">Save Result 💾</button>
+    </div>
+
+    <div id="feedback"></div>
+</div>
+
+<script>
+    const passages = [
+        "The charity has since evolved into an environmental NGO that not only engages retirees, such as Lai, in urban farming but also educates the public on eco-friendly ways to grow and consume food, including planting and buying in season to reduce the need for fertilisers and pesticides.",
+        "The charity is one of 13 NGOs supported by OSC this year. The funding will allow its Golden Greens Programme to promote gardening and nature-based activities that empower 100 low-income, socially isolated elderly residents in Kwai Tsing and Sham Shui Po next year, whether in elderly homes or public housing estates."
+    ];
+
+    let currentIdx = 0;
+    let lastScore = 0;
+    let synth = window.speechSynthesis;
+    let isPaused = false;
+
+    function switchSentence(index) {
+        currentIdx = index;
+        document.getElementById('display-idx').innerText = (index + 1) + " / 2";
+        const tabs = document.querySelectorAll('.tab-btn');
+        tabs[0].classList.toggle('active', index === 0);
+        tabs[1].classList.toggle('active', index === 1);
+        clearAll();
+    }
+
+    function playText() {
+        if (isPaused) {
+            synth.resume();
+            isPaused = false;
+            document.getElementById('pauseBtn').innerText = "Pause ⏸";
+        } else {
+            synth.cancel();
+            const utterance = new SpeechSynthesisUtterance(passages[currentIdx]);
+            utterance.lang = 'en-GB';
+            utterance.rate = 0.7;
+            utterance.onend = () => { isPaused = false; document.getElementById('pauseBtn').innerText = "Pause ⏸"; };
+            synth.speak(utterance);
+        }
+    }
+
+    function pauseText() {
+        if (synth.speaking && !isPaused) {
+            synth.pause();
+            isPaused = true;
+            document.getElementById('pauseBtn').innerText = "Resume ▶";
+        } else if (isPaused) {
+            synth.resume();
+            isPaused = false;
+            document.getElementById('pauseBtn').innerText = "Pause ⏸";
+        }
+    }
+
+    function restartText() {
+        synth.cancel();
+        isPaused = false;
+        document.getElementById('pauseBtn').innerText = "Pause ⏸";
+        playText();
+    }
+
+    function showHint() {
+        const words = passages[currentIdx].split(' ');
+        const hints = words.map(w => w[0] + w.slice(1).replace(/[a-zA-Z]/g, "_"));
+        const display = document.getElementById('hint-display');
+        display.innerText = hints.join(' ');
+        display.style.display = 'block';
+    }
+
+    function clearAll() {
+        synth.cancel();
+        document.getElementById('userInput').value = "";
+        document.getElementById('feedback').style.display = 'none';
+        document.getElementById('hint-display').style.display = 'none';
+        document.getElementById('display-score').innerText = "0%";
+    }
+
+    function checkAnswer() {
+        const userText = document.getElementById('userInput').value.trim();
+        const feedbackDiv = document.getElementById('feedback');
+        if (!userText) return;
+
+        const targetWords = passages[currentIdx].split(' ');
+        const userWords = userText.split(/\s+/);
+        let correctCount = 0;
+
+        let resultHTML = "<strong>Correction:</strong><br>";
+        targetWords.forEach((word, index) => {
+            const cleanTarget = word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"").toLowerCase();
+            const cleanUser = userWords[index] ? userWords[index].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"").toLowerCase() : "";
+            
+            if (cleanTarget === cleanUser) {
+                resultHTML += `<span class="correct">${word}</span> `;
+                correctCount++;
+            } else {
+                resultHTML += `<span class="incorrect">${word}</span> `;
+            }
+        });
+
+        lastScore = Math.round((correctCount / targetWords.length) * 100);
+        document.getElementById('display-score').innerText = lastScore + "%";
+        feedbackDiv.innerHTML = resultHTML + `<br><br><strong>Final Check: ${correctCount}/${targetWords.length} correct!</strong>`;
+        feedbackDiv.style.display = 'block';
+    }
+
+    function downloadReport() {
+        const name = document.getElementById('studentName').value || "Student";
+        const content = `Dictation Report\nName: ${name}\nPart: ${currentIdx + 1}\nScore: ${lastScore}%\n----------------\nText: ${passages[currentIdx]}`;
+        const blob = new Blob([content], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${name}_Dictation_P${currentIdx + 1}.txt`;
+        a.click();
+    }
+</script>
+</body>
+</html>
